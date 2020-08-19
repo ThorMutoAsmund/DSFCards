@@ -8,6 +8,7 @@ using iText.Layout.Element;
 using iText.Layout.Properties;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -32,27 +33,137 @@ namespace DSFCards
 
     class Program
     {
-        static string AppVersion = "0.1";
+        static string AppVersion = "0.2";
 
         static void Main(string[] args)
         {
+            var scoreCardInputFileName = "";
+            var compCardInputFileName = "";
+            var compCardRowsPerPage = 4;
+            var compCardColumnsPerPage = 3;
+            float? compCardLeftMargin = null;
+            float? compCardTopMargin = null;
+            string overrideScoreCardOutputFileName = null;
+            string overrideCompCardOutputFileName = null;
+
             Console.WriteLine($"DSF Cards - version {AppVersion}");
             Console.WriteLine("(C) 2020 Thor Muto Asmund");
             Console.WriteLine();
 
-            if (args.Length < 2)
+            if (args.Length < 2 || (args.Length > 0 && args[0] == "/?"))
             {
-                Console.WriteLine("USAGE: DSFCards.exe <SCORE_CARD_PDF> <COMP_CARD_PDF>");
-                return;
+                Console.WriteLine("DSFCards.exe scorecard_pdf compcard_pdf [/CR] [/CC] [/CLM] [/CTM] [/SO] [/CO]");
+                Console.WriteLine();
+                Console.WriteLine($"  scorecard_pdf  PDF file with score cards");
+                Console.WriteLine($"  compcard_pdf   PDF file with comp cards");
+                Console.WriteLine($"  /CR            Comp card rows per page (default {compCardRowsPerPage})");
+                Console.WriteLine($"  /CC            Comp card columns per page (default {compCardColumnsPerPage})");
+                Console.WriteLine($"  /CLM           Comp card left margin");
+                Console.WriteLine($"  /CTM           Comp card top margin");
+                Console.WriteLine($"  /SO            Score card output file");
+                Console.WriteLine($"  /CO            Comp card output file");
+                Environment.Exit(0);
             }
-            var scoreCardInputFileName = args[0];
-            var compCardInputFileName = args[1];
+
+            var arg = 0;
+            var noarg = 0;
+            while (arg < args.Length)
+            {
+                switch (args[arg].ToUpper())
+                {
+                    case "/CR":
+                        arg++;
+                        if (!Int32.TryParse(args[arg], out compCardRowsPerPage))
+                        {
+                            Console.WriteLine("Error parsing CR argument");
+                            Environment.Exit(1);
+                        }
+                        arg++;
+                        break;
+                    case "/CC":
+                        arg++;
+                        if (!Int32.TryParse(args[arg], out compCardColumnsPerPage))
+                        {
+                            Console.WriteLine("Error parsing CC argument");
+                            Environment.Exit(1);
+                        }
+                        arg++;
+                        break;
+                    case "/CLM":
+                        arg++;
+                        if (!float.TryParse(args[arg], System.Globalization.NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out var readLeftMargin))
+                        {
+                            Console.WriteLine("Error parsing CLM argument");
+                            Environment.Exit(1);
+                        }
+                        compCardLeftMargin = readLeftMargin;
+                        arg++;
+                        break;
+                    case "/CTM":
+                        arg++;
+                        if (!float.TryParse(args[arg], System.Globalization.NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out var readTopMargin))
+                        {
+                            Console.WriteLine("Error parsing CTM argument");
+                            Environment.Exit(1);
+                        }
+                        compCardTopMargin = readTopMargin;
+                        arg++;
+                        break;
+                    case "/SO":
+                        arg++;
+                        overrideScoreCardOutputFileName = args[arg];
+                        arg++;
+                        break;
+                    case "/CO":
+                        arg++;
+                        overrideCompCardOutputFileName = args[arg];
+                        arg++;
+                        break;
+                    default:
+                        switch (noarg)
+                        {
+                            case 0:
+                                scoreCardInputFileName = args[arg];
+                                noarg++;
+                                break;
+                            case 1:
+                                compCardInputFileName = args[arg];
+                                noarg++;
+                                break;
+                            default:
+                                Console.WriteLine("Too many arguments");
+                                Environment.Exit(1);
+                                break;
+                        }
+                        arg++;
+                        break;
+                }
+            }
+
+            if (noarg < 2)
+            {
+                Console.WriteLine("Missing arguments");
+                Environment.Exit(1);
+            }
+
+            if (!File.Exists(scoreCardInputFileName))
+            {
+                Console.WriteLine($"File not found: {scoreCardInputFileName}");
+                Environment.Exit(1);
+            }
+            if (!File.Exists(compCardInputFileName))
+            {
+                Console.WriteLine($"File not found: {compCardInputFileName}");
+                Environment.Exit(1);
+            }
+
             var isDebug = args.Length > 2 && args[2] == "DEBUG";
 
-            var scoreCardOutputFileName = scoreCardInputFileName.Replace(".pdf", "_out.pdf");
-            var dataOutputFileName = scoreCardInputFileName.Replace(".pdf", "_data.csv");
-            var compCardOutputFileName = compCardInputFileName.Replace(".pdf", "_out.pdf");
-
+            var scoreCardOutputFileName = overrideScoreCardOutputFileName ?? scoreCardInputFileName.Replace(".pdf", "_out.pdf");
+            var compCardOutputFileName = overrideCompCardOutputFileName ?? compCardInputFileName.Replace(".pdf", "_out.pdf");
+            
             var scoreCardText = PdfToText(scoreCardInputFileName);
             if (isDebug)
             {
@@ -72,7 +183,8 @@ namespace DSFCards
             
             // Create pdfs
             CreateScoreCards(scoreCardInputFileName, scoreCardOutputFileName, scoreCardEntries);
-            CreateCompCards(compCardInputFileName, compCardOutputFileName, scoreCardEntries, compCardEntries);
+            CreateCompCards(compCardInputFileName, compCardOutputFileName, scoreCardEntries, compCardEntries, 
+                compCardRowsPerPage, compCardColumnsPerPage, compCardLeftMargin, compCardTopMargin);
 
             Console.WriteLine("Finished!");
 
@@ -154,9 +266,13 @@ namespace DSFCards
             }
         }
 
-        static void CreateCompCards(string inputFileName, string outputFileName, List<ScoreCardEntry> scoreCardEntries, List<CompCardEntry> compCardEntries)
+        static void CreateCompCards(string inputFileName, string outputFileName, List<ScoreCardEntry> scoreCardEntries, List<CompCardEntry> compCardEntries,
+            int compCardRowsPerPage, int compCardColumnsPerPage, float? compCardLeftMargin, float? compCardTopMargin)
         {
+            // 59f 55f
             var font = PdfFontFactory.CreateFont(iText.IO.Font.FontConstants.HELVETICA);
+            var originalFontSize = 7.75f;
+            var fontSize = 5f;
 
             var p = 0;
             using (var reader = new PdfReader(inputFileName))
@@ -167,6 +283,29 @@ namespace DSFCards
                     {
                         using (var outputPdf = new PdfDocument(writer))
                         {
+                            // Calculate top margin
+                            if (!compCardTopMargin.HasValue)
+                            {
+                                compCardTopMargin = 55f;
+                            }
+
+                            // Calculate left margin
+                            if (!compCardLeftMargin.HasValue)
+                            {
+                                var calculatedLeftMargin = 0f;
+                                var eventNames = scoreCardEntries.Select(s => s.EventName).Distinct();
+                                foreach (var eventName in eventNames)
+                                {
+                                    var textWidth = font.GetWidth(eventName, originalFontSize);
+                                    if (textWidth > calculatedLeftMargin)
+                                    {
+                                        calculatedLeftMargin = textWidth;
+                                    }
+                                }
+                                compCardLeftMargin = calculatedLeftMargin;
+                            }
+
+                            // Process pages
                             for (int pageNo = 1; pageNo <= inputPdf.GetNumberOfPages(); pageNo++)
                             {
                                 var inputPage = inputPdf.GetPage(pageNo);
@@ -175,16 +314,16 @@ namespace DSFCards
                                 var mediaBox = outputPage.GetMediaBox();
                                 var canvas = new Canvas(new PdfCanvas(outputPage, true), mediaBox);
 
-                                for (int i = 0; i < 12; ++i)
+                                for (int i = 0; i < compCardRowsPerPage* compCardColumnsPerPage; ++i)
                                 {
                                     var compCardEntry = compCardEntries.FirstOrDefault(e => e.Index == p);
 
                                     if (compCardEntry != null)
                                     {
-                                        var x = mediaBox.GetWidth() + 49f;
-                                        x -= (mediaBox.GetWidth() / 3f - 3.5f) * (3 - (i % 3));
-                                        var y = mediaBox.GetHeight() - 55f;
-                                        y -= (mediaBox.GetHeight() / 4f - 38.5f) * (i / 3);
+                                        var x = 17.5f + compCardLeftMargin.Value;
+                                        x += (mediaBox.GetWidth() / compCardColumnsPerPage - 3.5f) * (i % compCardColumnsPerPage);
+                                        var y = mediaBox.GetHeight() - compCardTopMargin.Value;
+                                        y -= (mediaBox.GetHeight() / compCardRowsPerPage - 38.5f) * (i / compCardColumnsPerPage);
 
                                         foreach (var eventName in compCardEntry.EventList)
                                         {
@@ -192,9 +331,11 @@ namespace DSFCards
                                             if (scoreCardEntry != null)
                                             {
                                                 var text = $"S{scoreCardEntry.StationNo}";
-                                                canvas.ShowTextAligned(new Paragraph(text).SetFont(font).SetFontSize(8), x, y, TextAlignment.LEFT);
+                                                canvas.ShowTextAligned(new Paragraph(text).SetFont(font).SetFontSize(fontSize), x, y, TextAlignment.LEFT);
+                                                //canvas.ShowTextAligned(new Paragraph("BOB").SetFont(font).SetFontSize(fontSize), x+ calculatedLeftMargin, y, TextAlignment.LEFT);
+                                                
                                             }
-                                            y -= 12.5f;
+                                            y -= 12.4f;
                                         }
                                     }
                                     p++;
@@ -245,6 +386,12 @@ namespace DSFCards
                 // Event line
                 var eventLine = lines[lineNo].Trim();
                 var eventData = Regex.Split(eventLine, " ").ToArray();
+                if (eventData.Length < 3)
+                {
+                    Console.WriteLine($"Error in event data line: {eventLine}");
+                    break;
+                }
+
                 var eventName = string.Join(" ", eventData.Take(eventData.Length - 2));
                 var groupNo = eventData[eventData.Length - 1];
                 if (groupNo != currentGroupNo || eventName != currentEventName)
@@ -260,9 +407,20 @@ namespace DSFCards
                 currentEventName = eventName;
 
                 // Person id line
-                lineNo+=2;
+                lineNo += 2;
+                if (lineNo >= lines.Length)
+                {
+                    break;
+                }
+
                 var personLine = lines[lineNo].Trim();
                 var personData = Regex.Split(personLine, " ").ToArray();
+                if (personData.Length < 1)
+                {
+                    Console.WriteLine($"Error in person data line: {personLine}");
+                    break;
+                }
+
                 var personId = Int32.Parse(personData[0]);
 
                 // Add entry
@@ -316,10 +474,26 @@ namespace DSFCards
                     }
                     if (lines[lineNo].StartsWith("ID"))
                     {
-                        var idData = Regex.Split(lines[lineNo].Trim(), " ").ToArray();
-                        personId = Int32.Parse(idData[1]);
+                        var idLine = lines[lineNo].Trim();
+                        var idData = Regex.Split(idLine, " ").ToArray();
+                        if (idData.Length < 2)
+                        {
+                            Console.WriteLine($"Error in id data line: {idLine}");
+                            break;
+                        }
+
+                        if (!Int32.TryParse(idData[1], out personId))
+                        {
+                            Console.WriteLine($"Error parsing id: {idData[1]}");
+                            break;
+                        }
                         break;
                     }
+                }
+
+                if (lineNo >= lines.Length)
+                {
+                    break;
                 }
 
                 lineNo += 2;
@@ -330,6 +504,12 @@ namespace DSFCards
                     var eventLine = lines[lineNo].Trim();
                     if (eventLine.Length == 0)
                     {
+                        break;
+                    }
+                    else if(eventLine.StartsWith("ID"))
+                    {
+                        events.RemoveAt(events.Count - 1);
+                        lineNo--;
                         break;
                     }
                     var eventData = Regex.Split(eventLine, " ").Where(e =>
@@ -355,11 +535,6 @@ namespace DSFCards
                     PersonId = personId,
                     EventList = events.ToArray()
                 });
-
-                while (lineNo < lines.Length && lines[lineNo].Trim().Length == 0)
-                {
-                    lineNo++;
-                }
             }
             while (lineNo < lines.Length);
 
