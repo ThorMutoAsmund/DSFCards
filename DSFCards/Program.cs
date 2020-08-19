@@ -33,16 +33,18 @@ namespace DSFCards
 
     class Program
     {
-        static string AppVersion = "0.2";
+        static string AppVersion = "0.3";
 
         static void Main(string[] args)
         {
+            var isDebug = false;
             var scoreCardInputFileName = "";
             var compCardInputFileName = "";
             var compCardRowsPerPage = 4;
             var compCardColumnsPerPage = 3;
             float? compCardLeftMargin = null;
             float? compCardTopMargin = null;
+            float? compCardRowSpacing = null;
             string overrideScoreCardOutputFileName = null;
             string overrideCompCardOutputFileName = null;
 
@@ -62,6 +64,7 @@ namespace DSFCards
                 Console.WriteLine($"  /CTM           Comp card top margin");
                 Console.WriteLine($"  /SO            Score card output file");
                 Console.WriteLine($"  /CO            Comp card output file");
+                Console.WriteLine($"  /CRS           Comp card row spacing");
                 Environment.Exit(0);
             }
 
@@ -71,6 +74,10 @@ namespace DSFCards
             {
                 switch (args[arg].ToUpper())
                 {
+                    case "DEBUG":
+                        arg++;
+                        isDebug = true;
+                        break;
                     case "/CR":
                         arg++;
                         if (!Int32.TryParse(args[arg], out compCardRowsPerPage))
@@ -121,6 +128,17 @@ namespace DSFCards
                         overrideCompCardOutputFileName = args[arg];
                         arg++;
                         break;
+                    case "/CRS":
+                        arg++;
+                        if (!float.TryParse(args[arg], System.Globalization.NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out var readRowSpacing))
+                        {
+                            Console.WriteLine("Error parsing CRS argument");
+                            Environment.Exit(1);
+                        }
+                        compCardRowSpacing = readRowSpacing;
+                        arg++;
+                        break;
                     default:
                         switch (noarg)
                         {
@@ -159,8 +177,6 @@ namespace DSFCards
                 Environment.Exit(1);
             }
 
-            var isDebug = args.Length > 2 && args[2] == "DEBUG";
-
             var scoreCardOutputFileName = overrideScoreCardOutputFileName ?? scoreCardInputFileName.Replace(".pdf", "_out.pdf");
             var compCardOutputFileName = overrideCompCardOutputFileName ?? compCardInputFileName.Replace(".pdf", "_out.pdf");
             
@@ -184,7 +200,7 @@ namespace DSFCards
             // Create pdfs
             CreateScoreCards(scoreCardInputFileName, scoreCardOutputFileName, scoreCardEntries);
             CreateCompCards(compCardInputFileName, compCardOutputFileName, scoreCardEntries, compCardEntries, 
-                compCardRowsPerPage, compCardColumnsPerPage, compCardLeftMargin, compCardTopMargin);
+                compCardRowsPerPage, compCardColumnsPerPage, compCardLeftMargin, compCardTopMargin, compCardRowSpacing);
 
             Console.WriteLine("Finished!");
 
@@ -267,7 +283,7 @@ namespace DSFCards
         }
 
         static void CreateCompCards(string inputFileName, string outputFileName, List<ScoreCardEntry> scoreCardEntries, List<CompCardEntry> compCardEntries,
-            int compCardRowsPerPage, int compCardColumnsPerPage, float? compCardLeftMargin, float? compCardTopMargin)
+            int compCardRowsPerPage, int compCardColumnsPerPage, float? compCardLeftMargin, float? compCardTopMargin, float? compCardRowSpacing)
         {
             // 59f 55f
             var font = PdfFontFactory.CreateFont(iText.IO.Font.FontConstants.HELVETICA);
@@ -290,10 +306,11 @@ namespace DSFCards
                             }
 
                             // Calculate left margin
+                            var eventNames = scoreCardEntries.Select(s => s.EventName).Distinct();
+                            var totalNumberOfEvents = eventNames.Count();
                             if (!compCardLeftMargin.HasValue)
                             {
                                 var calculatedLeftMargin = 0f;
-                                var eventNames = scoreCardEntries.Select(s => s.EventName).Distinct();
                                 foreach (var eventName in eventNames)
                                 {
                                     var textWidth = font.GetWidth(eventName, originalFontSize);
@@ -303,6 +320,12 @@ namespace DSFCards
                                     }
                                 }
                                 compCardLeftMargin = calculatedLeftMargin;
+                            }
+
+                            // Calculate row spacing
+                            if (!compCardRowSpacing.HasValue)
+                            {
+                                compCardRowSpacing = 36f;
                             }
 
                             // Process pages
@@ -322,8 +345,9 @@ namespace DSFCards
                                     {
                                         var x = 17.5f + compCardLeftMargin.Value;
                                         x += (mediaBox.GetWidth() / compCardColumnsPerPage - 3.5f) * (i % compCardColumnsPerPage);
-                                        var y = mediaBox.GetHeight() - compCardTopMargin.Value;
-                                        y -= (mediaBox.GetHeight() / compCardRowsPerPage - 38.5f) * (i / compCardColumnsPerPage);
+                                        var y = mediaBox.GetHeight() - compCardTopMargin.Value - (12.4f*totalNumberOfEvents + compCardRowSpacing.Value) * (i / compCardColumnsPerPage);
+                                        //y -= (mediaBox.GetHeight() / compCardRowsPerPage - 38.5f) * (i / compCardColumnsPerPage);
+
 
                                         foreach (var eventName in compCardEntry.EventList)
                                         {
