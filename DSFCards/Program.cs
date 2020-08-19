@@ -20,7 +20,7 @@ namespace DSFCards
         public int Index { get; set; }
         public int PersonId { get; set; }
         public string EventName { get; set; }
-        public string GroupNo { get; set; }
+        public int GroupNo { get; set; }
         public int StationNo { get; set; }
     }
 
@@ -33,7 +33,7 @@ namespace DSFCards
 
     class Program
     {
-        static string AppVersion = "0.3";
+        static string AppVersion = "0.4";
 
         static void Main(string[] args)
         {
@@ -285,7 +285,6 @@ namespace DSFCards
         static void CreateCompCards(string inputFileName, string outputFileName, List<ScoreCardEntry> scoreCardEntries, List<CompCardEntry> compCardEntries,
             int compCardRowsPerPage, int compCardColumnsPerPage, float? compCardLeftMargin, float? compCardTopMargin, float? compCardRowSpacing)
         {
-            // 59f 55f
             var font = PdfFontFactory.CreateFont(iText.IO.Font.FontConstants.HELVETICA);
             var originalFontSize = 7.75f;
             var fontSize = 5f;
@@ -302,12 +301,16 @@ namespace DSFCards
                             // Calculate top margin
                             if (!compCardTopMargin.HasValue)
                             {
-                                compCardTopMargin = 55f;
+                                compCardTopMargin = 57f;
                             }
 
                             // Calculate left margin
                             var eventNames = scoreCardEntries.Select(s => s.EventName).Distinct();
                             var totalNumberOfEvents = eventNames.Count();
+                            foreach (var en in eventNames)
+                            {
+                                Console.WriteLine($"|{en}|");
+                            }
                             if (!compCardLeftMargin.HasValue)
                             {
                                 var calculatedLeftMargin = 0f;
@@ -322,12 +325,6 @@ namespace DSFCards
                                 compCardLeftMargin = calculatedLeftMargin;
                             }
 
-                            // Calculate row spacing
-                            if (!compCardRowSpacing.HasValue)
-                            {
-                                compCardRowSpacing = 36f;
-                            }
-
                             // Process pages
                             for (int pageNo = 1; pageNo <= inputPdf.GetNumberOfPages(); pageNo++)
                             {
@@ -337,6 +334,8 @@ namespace DSFCards
                                 var mediaBox = outputPage.GetMediaBox();
                                 var canvas = new Canvas(new PdfCanvas(outputPage, true), mediaBox);
 
+                                var y = 2 + mediaBox.GetHeight() - compCardTopMargin.Value;
+                                var maxEntriesOnThisRow = 0;
                                 for (int i = 0; i < compCardRowsPerPage* compCardColumnsPerPage; ++i)
                                 {
                                     var compCardEntry = compCardEntries.FirstOrDefault(e => e.Index == p);
@@ -345,22 +344,43 @@ namespace DSFCards
                                     {
                                         var x = 17.5f + compCardLeftMargin.Value;
                                         x += (mediaBox.GetWidth() / compCardColumnsPerPage - 3.5f) * (i % compCardColumnsPerPage);
-                                        var y = mediaBox.GetHeight() - compCardTopMargin.Value - (12.4f*totalNumberOfEvents + compCardRowSpacing.Value) * (i / compCardColumnsPerPage);
                                         //y -= (mediaBox.GetHeight() / compCardRowsPerPage - 38.5f) * (i / compCardColumnsPerPage);
 
+                                        if (compCardEntry.EventList.Length > maxEntriesOnThisRow)
+                                        {
+                                            maxEntriesOnThisRow = compCardEntry.EventList.Length;
+                                        }
 
+                                        var ly = y;
                                         foreach (var eventName in compCardEntry.EventList)
                                         {
                                             var scoreCardEntry = scoreCardEntries.FirstOrDefault(e => e.PersonId == compCardEntry.PersonId && e.EventName == eventName);
                                             if (scoreCardEntry != null)
                                             {
                                                 var text = $"S{scoreCardEntry.StationNo}";
-                                                canvas.ShowTextAligned(new Paragraph(text).SetFont(font).SetFontSize(fontSize), x, y, TextAlignment.LEFT);
+                                                canvas.ShowTextAligned(new Paragraph(text).SetFont(font).SetFontSize(fontSize), x, ly, TextAlignment.LEFT);
                                                 //canvas.ShowTextAligned(new Paragraph("BOB").SetFont(font).SetFontSize(fontSize), x+ calculatedLeftMargin, y, TextAlignment.LEFT);
                                                 
                                             }
-                                            y -= 12.4f;
+                                            ly -= 12.37f;
                                         }
+                                    }
+
+                                    if ((i % compCardColumnsPerPage) == compCardColumnsPerPage-1)
+                                    {
+                                        if (compCardRowSpacing.HasValue)
+                                        {
+                                            y -= compCardRowSpacing.Value;
+                                        }
+                                        else
+                                        {
+                                            y -= (12.37f * (maxEntriesOnThisRow - 1) + compCardTopMargin.Value);
+                                            if (maxEntriesOnThisRow < 12)
+                                            {
+                                                y -= 9.35f * (12 - maxEntriesOnThisRow);
+                                            }
+                                        }
+                                        maxEntriesOnThisRow = 0;
                                     }
                                     p++;
                                 }
@@ -383,7 +403,7 @@ namespace DSFCards
             var lineNo = -1;
             var stationNo = 0;
             var index = -1;
-            string currentGroupNo = "";
+            int currentGroupNo = 0;
             string currentEventName = "";
             do
             {
@@ -410,14 +430,36 @@ namespace DSFCards
                 // Event line
                 var eventLine = lines[lineNo].Trim();
                 var eventData = Regex.Split(eventLine, " ").ToArray();
-                if (eventData.Length < 3)
+                if (eventData.Length == 0)
                 {
                     Console.WriteLine($"Error in event data line: {eventLine}");
                     break;
                 }
 
-                var eventName = string.Join(" ", eventData.Take(eventData.Length - 2));
-                var groupNo = eventData[eventData.Length - 1];
+                var lastInteger = 0;
+                var secondToLastInteger = 0;
+                var lastIsInteger = eventData.Length > 1 && Int32.TryParse(eventData[eventData.Length - 1], out lastInteger);
+                var secondToLastIsInteger = eventData.Length > 2 && Int32.TryParse(eventData[eventData.Length - 2], out secondToLastInteger);
+                var roundNo = 1;
+                var groupNo = 1;
+                var eventName = "";
+                     
+                if (lastIsInteger && secondToLastIsInteger)
+                {
+                    roundNo = secondToLastInteger;
+                    groupNo = lastInteger;
+                    eventName = string.Join(" ", eventData.Take(eventData.Length - 2));
+                }
+                else if (lastIsInteger)
+                {
+                    roundNo = lastInteger;
+                    eventName = string.Join(" ", eventData.Take(eventData.Length - 1));
+                }
+                else
+                {
+                    eventName = string.Join(" ", eventData);
+                }
+
                 if (groupNo != currentGroupNo || eventName != currentEventName)
                 {
                     stationNo = 0;
